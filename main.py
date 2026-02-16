@@ -14,7 +14,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 import json
 import pandas as pd
 import streamlit as st
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from st_aggrid import AgGrid, GridOptionsBuilder
 
 
 @dataclass
@@ -150,7 +150,7 @@ def render_grid(df: pd.DataFrame) -> pd.DataFrame:
     grid = AgGrid(
         df,
         gridOptions=gb.build(),
-        update_mode=GridUpdateMode.VALUE_CHANGED,
+        update_on=["cellValueChanged"],  # replaces deprecated GridUpdateMode
         fit_columns_on_grid_load=True,
         enable_enterprise_modules=False,
     )
@@ -165,7 +165,10 @@ def sidebar_config() -> S3Layout:
     snapshot_prefix = st.sidebar.text_input("Snapshot prefix", value=os.environ.get("S3_SNAPSHOT_PREFIX", "snapshots"))
     audit_prefix = st.sidebar.text_input("Audit prefix", value=os.environ.get("S3_AUDIT_PREFIX", "audit"))
     profile = st.sidebar.text_input("AWS profile", value=os.environ.get("AWS_PROFILE", "zoop"))
-    file_format = st.sidebar.selectbox("File format", options=["csv", "parquet"], index=0)
+    file_format_default = os.environ.get("S3_FILE_FORMAT", "csv").lower()
+    file_format_options = ["csv", "parquet"]
+    file_format_index = file_format_options.index(file_format_default) if file_format_default in file_format_options else 1
+    file_format = st.sidebar.selectbox("File format", options=file_format_options, index=file_format_index)
     st.sidebar.caption("Saves are blocked if S3 is unreachable to prevent divergence.")
     return S3Layout(bucket, master_key, snapshot_prefix, audit_prefix, profile, file_format)
 
