@@ -1,4 +1,5 @@
-# Project Brief: Local Streamlit Editor for S3-Backed Master Matrix with Audit Logging
+# Project Brief: Local Streamlit Editor for S3-Backed Master Matrix with Audit
+# Logging
 
 ## 1. Project Objectives
 
@@ -59,8 +60,23 @@ master_YYYYMMDDTHHMMSS_uuid.csv audit/ YYYY-MM-DD/
 user_timestamp_uuid.jsonl
 
 Optional (for Athena/Glue later): data/master.parquet and matching
-snapshots with `.parquet` extension. The application will default to CSV
-but can emit Parquet when we enable that path.
+snapshots with `.parquet` extension. The application defaults to Parquet;
+switch to CSV only if you must edit the CSV master and then convert back to
+Parquet.
+
+Athena prerequisite
+- Set the Athena workgroup query results location to an existing prefix, e.g.
+    `s3://hypoxia24/athena-results/`. Create that prefix first and grant
+    s3:PutObject/ListBucket so Athena can write results.
+
+Terminology
+- Master file: authoritative object edited by Streamlit (CSV or Parquet) with S3
+VersionId used for optimistic locking.
+- Snapshot prefix: per-save immutable copy of the master using the same
+extension as the master; use to inspect/restore point-in-time states.
+- Audit prefix: per-save JSONL entry (one line) with timestamp, user, note,
+prev/new VersionIds, snapshot_key, row_count, column_count. Audits stay JSONL
+regardless of master format.
 
 ### Behavior
 
@@ -84,6 +100,21 @@ but can emit Parquet when we enable that path.
 4.  Concurrency
     -   Optimistic locking via S3 VersionId.
     -   Abort save if version changed since load.
+
+    ### SQL round-trip (default path)
+
+    -   Build Parquet master from CSV via CTAS to `data/master.parquet` (empty
+        the target prefix first). Athena: one statement per run; drop then
+        create.
+    -   Apply edits via CTAS rewrite to `data/master_next.parquet` (empty the
+        target first). Example: use a CTE to compute new values and filter out
+        rows to delete.
+    -   Promote the edited data to the app key by copying the newest part or
+        flattening all parts to the single object `data/master.parquet` (use
+        `scripts/flatten_parquet_parts.py`).
+    -   Set `S3_MASTER_KEY=data/master.parquet` and `S3_FILE_FORMAT=parquet` in
+        the app, then reload. Export back to CSV if needed for delivery.
+    -   Partition by cruise or vessel in CTAS tables if the dataset grows.
 
 ### Offline Behavior
 
@@ -136,10 +167,17 @@ Scalable pattern. - Easy aggregation later.
 1.  Convert CSV to Parquet.
 2.  Normalize datetime fields.
 3.  Implement row-level diff logging.
-4.  Partition data by cruise or vessel if scale increases.
+4.  Partition data by cruise or vessel if scale increases (for SQL and
+    Glue performance).
 5.  Integrate Glue catalog.
 6.  Add authentication (AWS SSO).
 7.  Formalize uv packaging + deployment process.
+
+Iceberg (optional, separate doc)
+- Only needed if heavy MERGE/DELETE patterns or table-level time-travel/rollback
+    become requirements. Otherwise, stay on the CSV/Parquet + snapshots + JSONL
+    audits flow above. See [ICEBERG.md](ICEBERG.md) for details; always export
+    back to the single-object master keys for the app.
 
 ------------------------------------------------------------------------
 

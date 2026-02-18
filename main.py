@@ -24,7 +24,7 @@ class S3Layout:
     snapshot_prefix: str
     audit_prefix: str
     profile: Optional[str]
-    file_format: str  # csv or parquet
+    file_format: str  # parquet only
 
 
 def get_boto3_client(profile: Optional[str]):
@@ -45,12 +45,11 @@ def load_dataset(client, layout: S3Layout):
     raw = obj["Body"].read()
 
     try:
-        if layout.file_format == "parquet":
-            df = pd.read_parquet(io.BytesIO(raw))
-        else:
-            df = pd.read_csv(io.BytesIO(raw))
+        df = pd.read_parquet(io.BytesIO(raw))
     except Exception as exc:
-        raise RuntimeError(f"Failed to parse dataset: {exc}")
+        raise RuntimeError(
+            "Failed to parse dataset as Parquet. Ensure the master key points to a single Parquet object."
+        ) from exc
 
     _validate_dataset(df)
     return df, version_id
@@ -71,12 +70,8 @@ def save_dataset(client, layout: S3Layout, df: pd.DataFrame, expected_version: O
         raise RuntimeError("Master file changed in S3 since you loaded it. Reload before saving.")
 
     buffer = io.BytesIO()
-    if layout.file_format == "parquet":
-        df.to_parquet(buffer, index=False)
-        ext = "parquet"
-    else:
-        df.to_csv(buffer, index=False)
-        ext = "csv"
+    df.to_parquet(buffer, index=False)
+    ext = "parquet"
     buffer.seek(0)
 
     blob = buffer.getvalue()
@@ -161,15 +156,12 @@ def render_grid(df: pd.DataFrame) -> pd.DataFrame:
 def sidebar_config() -> S3Layout:
     st.sidebar.header("S3 Configuration")
     bucket = st.sidebar.text_input("Bucket", value=os.environ.get("S3_BUCKET", "my-bucket"))
-    master_key = st.sidebar.text_input("Master key", value=os.environ.get("S3_MASTER_KEY", "data/master.csv"))
+    master_key = st.sidebar.text_input("Master key", value=os.environ.get("S3_MASTER_KEY", "data/master.parquet"))
     snapshot_prefix = st.sidebar.text_input("Snapshot prefix", value=os.environ.get("S3_SNAPSHOT_PREFIX", "snapshots"))
     audit_prefix = st.sidebar.text_input("Audit prefix", value=os.environ.get("S3_AUDIT_PREFIX", "audit"))
     profile = st.sidebar.text_input("AWS profile", value=os.environ.get("AWS_PROFILE", "zoop"))
-    file_format_default = os.environ.get("S3_FILE_FORMAT", "csv").lower()
-    file_format_options = ["csv", "parquet"]
-    file_format_index = file_format_options.index(file_format_default) if file_format_default in file_format_options else 1
-    file_format = st.sidebar.selectbox("File format", options=file_format_options, index=file_format_index)
-    st.sidebar.caption("Saves are blocked if S3 is unreachable to prevent divergence.")
+    file_format = "parquet"
+    st.sidebar.caption("Format is fixed to Parquet; saves are blocked if S3 is unreachable to prevent divergence.")
     return S3Layout(bucket, master_key, snapshot_prefix, audit_prefix, profile, file_format)
 
 
